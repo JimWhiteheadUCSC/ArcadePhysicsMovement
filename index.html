@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Arcade Physics Movement</title>
+    <style>
+        body {
+            margin: 0;
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <!-- Phaser 3.80.0 from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/phaser@v3.80.0/dist/phaser.min.js"></script>
+
+    <!-- Scene files must be loaded before main.js creates the Phaser.Game instance -->
+    <script src="./src/Scenes/Load.js"></script>
+    <script src="./src/Scenes/FixedVelocity.js"></script>
+    <script src="./src/Scenes/AccelerationDrag.js"></script>
+    <script src="./src/Scenes/PlatformerJump.js"></script>
+
+    <!-- Game config and boot — must come last -->
+    <script src="./src/main.js"></script>
+</body>
+</html>
