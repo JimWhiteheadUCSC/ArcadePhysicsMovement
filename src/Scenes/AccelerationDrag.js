@@ -98,7 +98,7 @@ class AccelerationDrag extends Phaser.Scene {
         } else {
             player.setAccelerationX(0);
             // Only switch to standing when nearly stopped, to avoid flickering
-            if (Math.abs(player.body.velocity.x) < 20) {
+            if (Math.abs(player.body.velocity.x) < 200) {
                 this.setPlayerAnim('player-stand');
             }
         }

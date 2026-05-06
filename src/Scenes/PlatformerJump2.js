@@ -1,44 +1,78 @@
-// PlatformerJump.js
+// PlatformerJump2.js
 // ──────────────────
-// Scene: Platformer with Jumping
+// Scene: Advanced Platformer Jump
 //
-// Adds jumping to the acceleration+drag movement from AccelerationDrag scene,
-// plus two floating platforms the player can land on.
+// Extends PlatformerJump with three game-feel improvements:
 //
-// Key API:
-//   player.body.blocked.down         true only when standing on a surface
-//   player.setVelocityY(-1400)       upward jump impulse (negative = up in Phaser)
-//   this.physics.add.collider(       process callback makes platforms one-way:
-//       player, platforms, null,     the player can jump up through a platform
-//       (p, plat) => ...)            but lands on top when falling
+// 1. Height-based jump configuration
+//    Instead of tuning a raw velocityY, set JUMP_HEIGHT (world px to rise) and
+//    GRAVITY_MULT (how fast the player falls relative to the world). The required
+//    initial velocity is derived from kinematics:
 //
-// One-way platform process callback explained:
-//   The callback fires before each collision is resolved. Return false to cancel it.
-//   Condition: player.body.velocity.y >= 0 && player.body.bottom <= platform.body.bottom
-//     - velocity.y >= 0: player is falling (or stationary) — not jumping upward
-//     - body.bottom <= platform.body.bottom: player's feet haven't passed through the
-//       platform yet. This prevents collision when the player is walking ON THE GROUND
-//       directly below a platform (where the player's body overlaps the platform body
-//       from below, but feet are far below the platform's bottom edge).
+//       v² = 2gh   →   v = sqrt(2 * totalGravity * JUMP_HEIGHT)
 //
-// World layout:
-//   Sprites are at their natural source size (no setScale).
-//   camera.setZoom(0.5) makes the 1600×1200 world fill the 800×600 canvas.
+//    GRAVITY_MULT is applied per-body via body.setGravityY() so world gravity
+//    stays constant while this player falls faster than other objects.
+//    body.setGravityY is ADDITIVE — it adds to world gravity, not replaces it:
+//
+//       totalGravity      = WORLD_GRAVITY * GRAVITY_MULT
+//       body.setGravityY  = WORLD_GRAVITY * (GRAVITY_MULT - 1)
+//
+// 2. Double jump
+//    The player gets MAX_JUMPS jumps before needing to touch the ground.
+//    jumpsRemaining resets every frame while body.blocked.down is true.
+//
+// 3. Jump buffer
+//    Pressing jump up to JUMP_BUFFER_MS ms before landing is "remembered" and
+//    fires the instant the player touches down. Makes inputs feel responsive even
+//    when the timing is slightly early.
+//
+//    All three cases are handled by one unified condition:
+//      jumpsRemaining > 0 && (time - jumpBufferTimer) < JUMP_BUFFER_MS
+//
+//    Normal jump:   grounded + just pressed → buffer fresh, jumpsRemaining = MAX_JUMPS
+//    Double jump:   airborne + just pressed → buffer fresh, jumpsRemaining > 0
+//    Buffered jump: pressed just before landing → buffer still young, jumpsRemaining
+//                   just reset by the grounded check in the same frame
 //
 // Level layout (world px; divide by 2 for screen px at zoom 0.5):
-//   Ground tiles: 128×128, row at y=1136, surface at y=1072
-//   Platform 1:   3 tiles at y=860, surface at y=796  (276 world px above ground)
-//   Platform 2:   3 tiles at y=680, surface at y=616  (456 world px above ground)
-//   Max jump height with velocityY=-1400, gravity=3000: ~327 world px
-//   Both platforms are reachable by stairstepping: ground → P1 → P2
+//   Platform 1: surface y=796  (276 px above ground) — reachable with single jump
+//   Platform 2: surface y=616  (180 px above P1)     — reachable with single jump from P1
+//   Platform 3: surface y=420  (376 px above P1)     — requires double jump from P1
 
-class PlatformerJump extends Phaser.Scene {
+class PlatformerJump2 extends Phaser.Scene {
     constructor() {
-        super('PlatformerJump');
+        super('PlatformerJump2');
     }
 
     create() {
         this.my = { sprite: {}, text: {} };
+
+        // ── Jump tuning parameters ────────────────────────────────────────────
+        //
+        // Adjust these to feel — the jump velocity is calculated automatically.
+        //
+        // JUMP_HEIGHT:    Desired peak rise above the jump point, in world px.
+        // GRAVITY_MULT:   Player falls at this multiple of world gravity (1000 px/s²).
+        //                 Higher values = snappier, less floaty arc.
+        //                 Only this body is affected; other physics objects unchanged.
+        // MAX_JUMPS:      1 = standard, 2 = double jump, etc.
+        // JUMP_BUFFER_MS: Window (ms) during which a jump press before landing still fires.
+        this.JUMP_HEIGHT    = 320;   // world px
+        this.GRAVITY_MULT   = 2.0;   // multiplier on world gravity (must be >= 1)
+        this.MAX_JUMPS      = 2;     // jumps available before requiring ground contact
+        this.JUMP_BUFFER_MS = 150;   // ms
+
+        // World gravity must match arcade.gravity.y in main.js
+        this.WORLD_GRAVITY = 1000;
+
+        // Derived values — recalculate whenever JUMP_HEIGHT or GRAVITY_MULT changes
+        const totalG = this.WORLD_GRAVITY * this.GRAVITY_MULT;
+        this.JUMP_VELOCITY = -Math.sqrt(2 * totalG * this.JUMP_HEIGHT); // negative = upward
+
+        // Jump state
+        this.jumpsRemaining  = this.MAX_JUMPS;
+        this.jumpBufferTimer = -Infinity;   // timestamp of last jump keypress; -Infinity = no pending buffer
 
         // ── Camera & world ────────────────────────────────────────────────────
         this.cameras.main.setZoom(0.5);
@@ -61,19 +95,18 @@ class PlatformerJump extends Phaser.Scene {
 
         this.my.sprite.player.setDragX(1600);
 
+        // body.setGravityY is additive: total = worldGravity + bodyGravityY
+        // We want total = WORLD_GRAVITY * GRAVITY_MULT, so:
+        //   bodyGravityY = WORLD_GRAVITY * (GRAVITY_MULT - 1)
+        this.my.sprite.player.body.setGravityY(
+            this.WORLD_GRAVITY * (this.GRAVITY_MULT - 1)
+        );
+
         // ── Colliders ─────────────────────────────────────────────────────────
-        // Ground: standard two-way collision
         this.physics.add.collider(this.my.sprite.player, this.groundGroup);
 
-        // Platforms: process callback runs before each collision is resolved.
-        // Returning false cancels the collision for that frame.
-        //
-        // Two conditions must both be true for a platform collision to activate:
-        //   1. player.body.velocity.y >= 0  — player is moving down (or stationary)
-        //   2. player.body.bottom <= platform.body.bottom  — player's feet are still
-        //      within the platform tile's body height (prevents false collisions when
-        //      the player stands on the ground below a platform and their body overlaps
-        //      the platform from below).
+        // One-way platforms: only collide when player is falling and hasn't
+        // passed through the tile (allows jumping up through platforms).
         this.physics.add.collider(
             this.my.sprite.player,
             this.platformGroup,
@@ -107,8 +140,8 @@ class PlatformerJump extends Phaser.Scene {
 
         // ── UI ───────────────────────────────────────────────────────────────
         this.my.text.info = this.add.text(20, 20,
-            'Scene: Platformer Jump\n' +
-            'Left / Right: move  |  Up arrow: jump onto platforms\n' +
+            'Scene: Advanced Platformer\n' +
+            'Left / Right: move  |  Up: jump (double jump!)  |  Platform 3 needs double jump\n' +
             'TAB: back to scene 1  |  R: restart  |  D: physics debug',
             { fontSize: '32px', fill: '#000000', backgroundColor: '#ffffffcc', padding: { x: 12, y: 8 } }
         );
@@ -120,7 +153,7 @@ class PlatformerJump extends Phaser.Scene {
     update(time, delta) {
         const player  = this.my.sprite.player;
         const cursors = this.cursors;
-        let dt = delta/1000;
+        let dt = delta / 1000;
 
         // ── Horizontal movement ───────────────────────────────────────────────
         if (cursors.left.isDown) {
@@ -133,15 +166,38 @@ class PlatformerJump extends Phaser.Scene {
             player.setAccelerationX(0);
         }
 
-        // ── Jump ──────────────────────────────────────────────────────────────
-        // body.blocked.down is true only when the physics body is resting on
-        // a surface (ground or platform). This prevents jumping in mid-air.
-        if (cursors.up.isDown && player.body.blocked.down) {
-            player.setVelocityY(-900);   // upward impulse; max height ≈ v²/(2g) ≈ 327 world px
+        // ── Step 1: Record jump input ─────────────────────────────────────────
+        // Store the timestamp every time jump is pressed, whether grounded or not.
+        // This timestamp is what enables both double jump and the jump buffer.
+        if (Phaser.Input.Keyboard.JustDown(cursors.up)) {
+            this.jumpBufferTimer = time;
+        }
+
+        // ── Step 2: Reset jump count on landing ───────────────────────────────
+        // body.blocked.down is true every frame the player rests on a surface,
+        // so jumpsRemaining is replenished for as long as the player is grounded.
+        if (player.body.blocked.down) {
+            this.jumpsRemaining = this.MAX_JUMPS;
+        }
+
+        // ── Step 3: Execute jump ──────────────────────────────────────────────
+        // One condition covers all three cases:
+        //
+        //   Normal jump:   player pressed jump while grounded
+        //                  → buffer just set, jumpsRemaining = MAX_JUMPS from step 2
+        //
+        //   Double jump:   player pressed jump while airborne, has jumps left
+        //                  → buffer just set, step 2 skipped (not grounded)
+        //
+        //   Buffered jump: player pressed jump slightly before landing
+        //                  → buffer still within window, step 2 just reset jumpsRemaining
+        if (this.jumpsRemaining > 0 && (time - this.jumpBufferTimer) < this.JUMP_BUFFER_MS) {
+            player.setVelocityY(this.JUMP_VELOCITY);
+            this.jumpsRemaining--;
+            this.jumpBufferTimer = -Infinity;   // consume the press so it only fires once
         }
 
         // ── Animation state machine ───────────────────────────────────────────
-        // Priority: airborne > walking > standing
         if (!player.body.blocked.down) {
             this.setPlayerAnim('player-jump');
         } else if (Math.abs(player.body.velocity.x) > 20) {
@@ -150,7 +206,6 @@ class PlatformerJump extends Phaser.Scene {
             this.setPlayerAnim('player-stand');
         }
 
-        // Flip sprite to match horizontal direction even while airborne
         if (player.body.velocity.x < -20) {
             player.setFlipX(true);
         } else if (player.body.velocity.x > 20) {
@@ -161,8 +216,8 @@ class PlatformerJump extends Phaser.Scene {
         const worm = this.my.sprite.worm;
         worm.x += worm.wormDir * worm.wormSpeed * dt;
 
-        if (worm.x > 1400) { worm.wormDir = -1; worm.setFlipX(false);  }
-        if (worm.x < 200)  { worm.wormDir =  1; worm.setFlipX(true); }
+        if (worm.x > 1400) { worm.wormDir = -1; worm.setFlipX(false); }
+        if (worm.x < 200)  { worm.wormDir =  1; worm.setFlipX(true);  }
 
         // ── Bee movement ──────────────────────────────────────────────────────
         const bee = this.my.sprite.bee;
@@ -178,7 +233,7 @@ class PlatformerJump extends Phaser.Scene {
 
         // ── Scene transitions ─────────────────────────────────────────────────
         if (Phaser.Input.Keyboard.JustDown(this.keyTAB)) {
-            this.scene.start('PlatformerJump2');
+            this.scene.start('FixedVelocity');
         }
         if (Phaser.Input.Keyboard.JustDown(this.keyR)) {
             this.scene.restart();
@@ -206,21 +261,23 @@ class PlatformerJump extends Phaser.Scene {
     }
 
     buildPlatforms(group) {
-        // Platform 1: 3 tiles, y=860, left edge at x=320
-        // Tile centers: x = 384, 512, 640
-        // Surface top: 860 - 64 = 796  (138 screen px above ground at zoom 0.5)
+        // Platform 1: surface y=796 (276 px above ground) — reachable with one jump
         const p1 = ['grassLeft.png', 'grassMid.png', 'grassMid.png', 'grassRight.png'];
         p1.forEach((frame, i) => {
             group.create(384 + i * 128, 860, 'ground', frame);
         });
 
-        // Platform 2: 3 tiles, y=680, left edge at x=960
-        // Tile centers: x = 1024, 1152, 1280
-        // Surface top: 680 - 64 = 616  (228 screen px above ground at zoom 0.5)
-        // Reachable by jumping from Platform 1 (90 screen px gap, max jump ≈ 163 screen px)
+        // Platform 2: surface y=616 (180 px above P1) — reachable with one jump from P1
         const p2 = ['grassLeft.png', 'grassMid.png', 'grassRight.png'];
         p2.forEach((frame, i) => {
             group.create(1024 + i * 128, 680, 'ground', frame);
+        });
+
+        // Platform 3: surface y=420 (376 px above P1, exceeds single jump height of 320)
+        // Requires a double jump from Platform 1 to reach.
+        const p3 = ['grassLeft.png', 'grassMid.png', 'grassRight.png'];
+        p3.forEach((frame, i) => {
+            group.create(384 + i * 128, 484, 'ground', frame);
         });
     }
 }

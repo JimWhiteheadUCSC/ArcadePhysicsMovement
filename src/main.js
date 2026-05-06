@@ -15,12 +15,12 @@ const config = {
     physics: {
         default: 'arcade',
         arcade: {
-            gravity: { x: 0, y: 3000 },  // 3000 px/s² in 1600×1200 world
+            gravity: { x: 0, y: 1000 },  // 3000 px/s² in 1600×1200 world
                                           // = same on-screen feel as 1500 in an 800×600 world
             debug: true                   // enables debug graphics (hidden by default; press D to toggle)
         }
     },
-    scene: [Load, FixedVelocity, AccelerationDrag, PlatformerJump]
+    scene: [Load, FixedVelocity, AccelerationDrag, PlatformerJump, PlatformerJump2]
 };
 
 const game = new Phaser.Game(config);
