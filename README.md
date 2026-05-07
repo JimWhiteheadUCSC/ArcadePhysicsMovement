@@ -8,6 +8,8 @@ A demonstration of player avatar movement using Phaser's Arcade Physics.
 
 *Platformer Jump:* Acceleration movement left/right, and then acceleration movement for jumping, with gravity controlling the fall back to ground.
 
+*Platformer Jump2:* Acceleration movement left/right, then jumping controlled by a max height and gravity multiplier. 
+
 This demo also shows world boundary checking using setCollideWorldBounds(true), ground collisions using static groups, and a collider using a collision function for platform collisions.
 
 Art assets provided by the Kenney Assets [Platformer Pack Remastered](https://kenney.nl/assets/platformer-pack-remastered), with gratitude.
